@@ -6,6 +6,7 @@ import socket
 from config import *
 from multiprocessing import Pool
 
+
 class PolicyEntity:
     def __init__(self, score) -> None:
         self.score = score
@@ -26,6 +27,7 @@ class PgHelper():
         self.output_query_latency_file = output_query_latency_file
 
     def start(self, pool_num):
+        print("PgHelper start")
         pool = Pool(pool_num)
         for fp, q in self.queries:
             pool.apply_async(do_run_query, args=(q, fp, [], self.output_query_latency_file, True, None, None))
@@ -35,6 +37,7 @@ class PgHelper():
 
 
 class LeroHelper():
+    print("LeroHelper")
     def __init__(self, queries, query_num_per_chunk, output_query_latency_file, 
                 test_queries, model_prefix, topK) -> None:
         self.queries = queries
@@ -47,11 +50,13 @@ class LeroHelper():
         self.lero_card_file_path = os.path.join(LERO_SERVER_PATH, LERO_DUMP_CARD_FILE)
 
     def chunks(self, lst, n):
+        print("chunks")
         """Yield successive n-sized chunks from lst."""
         for i in range(0, len(lst), n):
             yield lst[i:i + n]
 
     def start(self, pool_num):
+        print("LeroHelper start")
         lero_chunks = list(self.chunks(self.queries, self.query_num_per_chunk))
 
         run_args = self.get_run_args()
@@ -68,6 +73,7 @@ class LeroHelper():
             self.test_benchmark(self.output_query_latency_file + "_" + model_name)
 
     def retrain(self, model_name):
+        print("retrain")
         training_data_file = self.output_query_latency_file + ".training"
         create_training_file(training_data_file, self.output_query_latency_file, self.output_query_latency_file + "_exploratory")
         print("retrain Lero model:", model_name, "with file", training_data_file)
@@ -83,6 +89,7 @@ class LeroHelper():
         return model_name
 
     def load_model(self, model_name):
+        print("load_model")
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.connect((LERO_SERVER_HOST, LERO_SERVER_PORT))
         json_str = json.dumps({"msg_type":"load", "model_path": os.path.abspath(LERO_SERVER_PATH + model_name)})
@@ -95,21 +102,25 @@ class LeroHelper():
         os.system("sync")
 
     def test_benchmark(self, output_file):
+        print("test_benchmark")
         run_args = self.get_run_args()
         for (fp, q) in self.test_queries:
             do_run_query(q, fp, run_args, output_file, True, None, None)
 
     def get_run_args(self):
+        print("get_run_args")
         run_args = []
         run_args.append("SET enable_lero TO True")
         return run_args
 
     def get_card_test_args(self, card_file_name):
+        print("get_card_test_args")
         run_args = []
         run_args.append("SET lero_joinest_fname TO '" + card_file_name + "'")
         return run_args
 
     def run_pairwise(self, q, fp, run_args, output_query_latency_file, exploratory_query_latency_file, pool):
+        print("run_pairwise")
         explain_query(q, run_args)
         policy_entities = []
         with open(self.lero_card_file_path, 'r') as f:
@@ -136,6 +147,7 @@ class LeroHelper():
                 i += 1
 
     def predict(self, plan):
+        print("predict")
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.connect((LERO_SERVER_HOST, LERO_SERVER_PORT))
         s.sendall(bytes(json.dumps({"msg_type":"predict", "Plan":plan}) + "*LERO_END*", "utf-8"))

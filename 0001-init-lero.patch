@@ -12833,4 +12833,3 @@ index 6141654..461cc43 100644
  extern void cost_seqscan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
 -- 
 2.20.1
-

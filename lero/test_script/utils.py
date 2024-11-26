@@ -3,16 +3,41 @@ import json
 import os
 from time import time
 from config import *
-import fcntl
 import psycopg2
+
+# File locking compatibility for Windows and Unix-like systems
+try:
+    import fcntl
+
+    # def lock_file(file, lock_type):
+    #     fcntl.flock(file, lock_type)
+
+    def lock_file(file, lock_type):
+        if lock_type == 'LOCK_EX':
+            lock_type = fcntl.LOCK_EX
+        elif lock_type == 'LOCK_SH':
+            lock_type = fcntl.LOCK_SH
+        elif lock_type == 'LOCK_UN':
+            lock_type = fcntl.LOCK_UN
+        fcntl.flock(file, lock_type)
+
+except ImportError:
+    import msvcrt
+
+    def lock_file(file, lock_type):
+        if lock_type == 'LOCK_EX':
+            msvcrt.locking(file.fileno(), msvcrt.LK_LOCK, 1)
+        elif lock_type == 'LOCK_UN':
+            msvcrt.locking(file.fileno(), msvcrt.LK_UNLCK, 1)
 
 def encode_str(s):
     md5 = hashlib.md5()
     md5.update(s.encode('utf-8'))
     return md5.hexdigest()
-        
+
 def run_query(q, run_args):
     start = time()
+    print(f"Using connection string: {CONNECTION_STR}")
     conn = psycopg2.connect(CONNECTION_STR)
     conn.set_client_encoding('UTF8')
     result = None
@@ -27,12 +52,7 @@ def run_query(q, run_args):
         cur.execute(q)
         result = cur.fetchall()
     finally:
-        
         conn.close()
-    # except Exception as e:
-    #     conn.close()
-    #     raise e
-    
     stop = time()
     return stop - start, result
 
@@ -40,7 +60,7 @@ def get_history(encoded_q_str, plan_str, encoded_plan_str):
     history_path = os.path.join(LOG_PATH, encoded_q_str, encoded_plan_str)
     if not os.path.exists(history_path):
         return None
-    
+
     print("visit histroy path: ", history_path)
     with open(os.path.join(history_path, "check_plan"), "r") as f:
         history_plan_str = f.read().strip()
@@ -49,11 +69,11 @@ def get_history(encoded_q_str, plan_str, encoded_plan_str):
             print("given", plan_str)
             print("wanted", history_plan_str)
             return None
-    
+
     print("get the history file:", history_path)
     with open(os.path.join(history_path, "plan"), "r") as f:
         return f.read().strip()
-    
+
 def save_history(q, encoded_q_str, plan_str, encoded_plan_str, latency_str):
     history_q_path = os.path.join(LOG_PATH, encoded_q_str)
     if not os.path.exists(history_q_path):
@@ -68,32 +88,33 @@ def save_history(q, encoded_q_str, plan_str, encoded_plan_str, latency_str):
                 print("given", q)
                 print("wanted", history_q)
                 return
-    
+
     history_plan_path = os.path.join(history_q_path, encoded_plan_str)
     if os.path.exists(history_plan_path):
         print("the plan has been saved by other processes:", history_plan_path)
         return
     else:
         os.makedirs(history_plan_path)
-        
+
     with open(os.path.join(history_plan_path, "check_plan"), "w") as f:
         f.write(plan_str)
     with open(os.path.join(history_plan_path, "plan"), "w") as f:
         f.write(latency_str)
     print("save history:", history_plan_path)
 
-def explain_query(q, run_args, contains_cost = False):
-    q = "EXPLAIN (COSTS " + ("" if contains_cost else "False") + ", FORMAT JSON, SUMMARY) " + (q.strip().replace("\n", " ").replace("\t", " "))
+def explain_query(q, run_args, contains_cost=False):
+    q = "EXPLAIN (COSTS " + ("" if contains_cost else "False") + ", FORMAT JSON, SUMMARY) " + (
+        q.strip().replace("\n", " ").replace("\t", " "))
     _, plan_json = run_query(q, run_args)
     plan_json = plan_json[0][0]
     if len(plan_json) == 2:
-        # remove bao's prediction
         plan_json = [plan_json[1]]
     return plan_json
 
 def create_training_file(training_data_file, *latency_files):
     lines = []
     for file in latency_files:
+        print(f"Trying to open: {file}")
         with open(file, 'r') as f:
             lines += f.readlines()
 
@@ -115,20 +136,18 @@ def create_training_file(training_data_file, *latency_files):
     with open(training_data_file, 'w') as f2:
         f2.write(str)
 
-def do_run_query(sql, query_name, run_args, latency_file, write_latency_file = True, manager_dict = None, manager_lock = None):
+def do_run_query(sql, query_name, run_args, latency_file, write_latency_file=True, manager_dict=None, manager_lock=None):
     sql = sql.strip().replace("\n", " ").replace("\t", " ")
 
-    # 1. run query with pg hint
+    # 1. Run query with pg hint
     _, plan_json = run_query("EXPLAIN (COSTS FALSE, FORMAT JSON, SUMMARY) " + sql, run_args)
     plan_json = plan_json[0][0]
     if len(plan_json) == 2:
-        # remove bao's prediction
         plan_json = [plan_json[1]]
     planning_time = plan_json[0]['Planning Time']
-    
+
     cur_plan_str = json.dumps(plan_json[0]['Plan'])
     try:
-        # 2. get previous running result
         latency_json = None
         encoded_plan_str = encode_str(cur_plan_str)
         encoded_q_str = encode_str(sql)
@@ -146,21 +165,19 @@ def do_run_query(sql, query_name, run_args, latency_file, write_latency_file = T
                     manager_dict[cur_plan_str] = 1
                     manager_lock.release()
 
-            # 3. run current query 
+            # 3. Run current query
             run_start = time()
             try:
-                _, latency_json = run_query("EXPLAIN (ANALYZE, TIMING, VERBOSE, COSTS, SUMMARY, FORMAT JSON) " + sql, run_args)
+                _, latency_json = run_query("EXPLAIN (ANALYZE, TIMING, VERBOSE, COSTS, SUMMARY, FORMAT JSON) " + sql,
+                                            run_args)
                 latency_json = latency_json[0][0]
                 if len(latency_json) == 2:
-                    # remove bao's prediction
                     latency_json = [latency_json[1]]
             except Exception as e:
-                if  time() - run_start > (TIMEOUT / 1000 * 0.9):
-                    # Execution timeout
+                if time() - run_start > (TIMEOUT / 1000 * 0.9):
                     _, latency_json = run_query("EXPLAIN (VERBOSE, COSTS, FORMAT JSON, SUMMARY) " + sql, run_args)
                     latency_json = latency_json[0][0]
                     if len(latency_json) == 2:
-                        # remove bao's prediction
                         latency_json = [latency_json[1]]
                     latency_json[0]["Execution Time"] = TIMEOUT
                 else:
@@ -169,19 +186,18 @@ def do_run_query(sql, query_name, run_args, latency_file, write_latency_file = T
             latency_str = json.dumps(latency_json)
             save_history(sql, encoded_q_str, cur_plan_str, encoded_plan_str, latency_str)
 
-        # 4. save latency
         latency_json[0]['Planning Time'] = planning_time
         if write_latency_file:
             with open(latency_file, "a+") as f:
-                fcntl.flock(f, fcntl.LOCK_EX)
+                lock_file(f, 'LOCK_EX')
                 f.write(query_name + SEP + json.dumps(latency_json) + "\n")
-                fcntl.flock(f, fcntl.LOCK_UN)
+                lock_file(f, 'LOCK_UN')
 
         exec_time = latency_json[0]["Execution Time"]
         print(time(), query_name, exec_time, flush=True)
     except Exception as e:
         with open(latency_file + "_error", "a+") as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
+            lock_file(f, 'LOCK_EX')
             f.write(query_name + "\n")
             f.write(str(e).strip() + "\n")
-            fcntl.flock(f, fcntl.LOCK_UN)
+            lock_file(f, 'LOCK_UN')

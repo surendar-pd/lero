@@ -7,6 +7,11 @@ from test_script.config import LERO_DUMP_CARD_FILE
 from utils import (OptState, PlanCardReplacer, get_tree_signature, print_log,
                    read_config)
 
+import os
+
+print(f"Current working directory: {os.getcwd()}")
+print("Looking for server.conf...")
+print("Testing server.py")
 
 class LeroJSONHandler(socketserver.BaseRequestHandler):
     def setup(self):
@@ -15,29 +20,44 @@ class LeroJSONHandler(socketserver.BaseRequestHandler):
     def handle(self):
         str_buf = ""
         while True:
-            str_buf += self.request.recv(81960).decode("UTF-8")
-            if not str_buf:
-                # no more data, connection is finished.
-                return
-
-            if (null_loc := str_buf.find("*LERO_END*")) != -1:
-                json_msg = str_buf[:null_loc].strip()
-                str_buf = str_buf[null_loc + len("*LERO_END*"):]
-                if json_msg:
-                    try:
-                        self.handle_msg(json_msg)
-                        break
-                    except json.decoder.JSONDecodeError as e:
-                        print(str(e))
-                        print_log(
-                            "Error decoding JSON:" + json_msg.replace("\"", "\'"), "./server.log", True)
-                        break
+            try:
+                # Receiving data with error handling for decoding
+                data = self.request.recv(81960)
+                if not data:
+                    # No more data, connection is finished
+                    return
+                
+                # Decode with error handling
+                str_buf += data.decode("UTF-8", errors="replace")
+                
+                if (null_loc := str_buf.find("*LERO_END*")) != -1:
+                    json_msg = str_buf[:null_loc].strip()
+                    str_buf = str_buf[null_loc + len("*LERO_END*"):]
+                    if json_msg:
+                        try:
+                            self.handle_msg(json_msg)
+                            break
+                        except json.decoder.JSONDecodeError as e:
+                            print("Error decoding JSON:", e)
+                            print_log(
+                                f"Error decoding JSON: {json_msg.replace('\"', '\'')}",
+                                "./server.log", True
+                            )
+                            break
+            except UnicodeDecodeError as e:
+                print("Unicode decode error:", e)
+                print_log(f"Unicode decode error: {e}", "./server.log", True)
+                break
+            except Exception as e:
+                print("Unexpected error:", e)
+                print_log(f"Unexpected error: {e}", "./server.log", True)
+                break
 
     def handle_msg(self, json_msg):
-        json_obj = json.loads(json_msg)
-        msg_type = json_obj['msg_type']
-        reply_msg = {}
         try:
+            json_obj = json.loads(json_msg)
+            msg_type = json_obj['msg_type']
+            reply_msg = {}
             if msg_type == "init":
                 self._init(json_obj, reply_msg)
             elif msg_type == "guided_optimization":
@@ -55,21 +75,20 @@ class LeroJSONHandler(socketserver.BaseRequestHandler):
             elif msg_type == "remove_state":
                 self._remove_state(json_obj, reply_msg)
             else:
-                print("Unknown msg type: " + msg_type)
+                print("Unknown msg type:", msg_type)
                 reply_msg['msg_type'] = "error"
-        except Exception as e:
-            reply_msg['msg_type'] = "error"
-            reply_msg['error'] = str(e)
-            print(e)
 
-        self.request.sendall(bytes(json.dumps(reply_msg), "utf-8"))
-        self.request.close()
+            self.request.sendall(bytes(json.dumps(reply_msg), "utf-8"))
+        except Exception as e:
+            reply_msg = {'msg_type': "error", 'error': str(e)}
+            print("Error handling message:", e)
+            self.request.sendall(bytes(json.dumps(reply_msg), "utf-8"))
 
     def _init(self, json_obj, reply_msg):
         qid = json_obj['query_id']
         print("init query", qid)
         card_picker = CardPicker(json_obj['rows_array'], json_obj['table_array'],
-                                self.server.swing_factor_lower_bound, self.server.swing_factor_upper_bound, self.server.swing_factor_step)
+                                 self.server.swing_factor_lower_bound, self.server.swing_factor_upper_bound, self.server.swing_factor_step)
         print(json_obj['table_array'], json_obj['rows_array'])
         plan_card_replacer = PlanCardReplacer(json_obj['table_array'], json_obj['rows_array'])
         opt_state = OptState(card_picker, plan_card_replacer, self.server.dump_card)
@@ -97,7 +116,6 @@ class LeroJSONHandler(socketserver.BaseRequestHandler):
         finish = opt_state.card_picker.next()
         reply_msg['finish'] = 1 if finish else 0
 
-    # just do prediction
     def _predict(self, json_msg, reply_msg):
         if self.server.model is not None:
             local_features, _ = self.server.feature_generator.transform([json_msg])

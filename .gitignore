@@ -4,6 +4,7 @@ pgsql
 data
 lero/*tpch*
 lero/*log*
+lero/myenv
 lero/dump_card_with_score.txt
 __pycache__
 .ipynb*
