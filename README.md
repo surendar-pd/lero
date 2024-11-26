@@ -1,7 +1,3 @@
-### Enhanced README for Reproducing Lero
-
----
-
 # **Lero: A Learning-to-Rank Query Optimizer**
 
 This repository provides a demo implementation of **Lero**, a machine learning-based query optimizer that uses a pairwise learning-to-rank approach to improve query execution plans in PostgreSQL.
@@ -180,8 +176,8 @@ If running on a CPU-only system, modify the code to disable GPU:
 ---
 
 ## **Acknowledgments**
-This implementation is based on the paper **"Lero: A Learning-to-Rank Query Optimizer"**. For further details, refer to the paper in this repository.
+This implementation is based on the paper **"Lero: A Learning-to-Rank Query Optimizer"**. For further details, refer to the paper in this repository. 
 
---- 
-
-This enhanced README aims to provide a seamless setup and execution guide for reproducing Lero experiments. If you encounter additional challenges, please document and address them as part of the reproduction journey.
+## Additional Resources
+[Lero: A Learning-to-Rank Query Optimizer Paper](https://arxiv.org/abs/2302.06873)
+[Lero GitHub Repo](https://github.com/AlibabaIncubator/Lero-on-PostgreSQL)
